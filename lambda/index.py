@@ -1,10 +1,11 @@
 # lambda/index.py
+import base64
+import boto3
+import io
 import json
 import os
-import boto3
-import re  # 正規表現モジュールをインポート
-from botocore.exceptions import ClientError
-
+import pptx
+import re
 
 # Lambda コンテキストからリージョンを抽出する関数
 def extract_region_from_arn(arn):
@@ -19,6 +20,16 @@ bedrock_client = None
 
 # モデルID
 MODEL_ID = os.environ.get("MODEL_ID", "us.amazon.nova-lite-v1:0")
+
+# .pptxからテキスト抽出
+def extract_text_from_pptx(pptx_bytes):
+    prs = pptx.Presentation(io.BytesIO(pptx_bytes))
+    texts = []
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if hasattr(shape, "text"):
+                texts.append(shape.text)
+    return "\n".join(texts)
 
 def lambda_handler(event, context):
     try:
@@ -39,39 +50,38 @@ def lambda_handler(event, context):
         
         # リクエストボディの解析
         body = json.loads(event['body'])
-        message = body['message']
-        conversation_history = body.get('conversationHistory', [])
+        # 入力ファイルのデコードとテキスト抽出
+        pptx_base64 = body['pptxFile']
+        txt_base64 = body['txtFile']
+
+        if not pptx_base64 or not txt_base64:
+            raise Exception("Both pptxFile and txtFile must be provided in base64 format.")
         
-        print("Processing message:", message)
-        print("Using model:", MODEL_ID)
+        pptx_bytes = base64.b64decode(pptx_base64)
+        txt_bytes = base64.b64decode(txt_base64)
+        original_txt = txt_bytes.decode('utf-8')
+
+        # pptxからの正しい内容の抽出
+        reference_text = extract_text_from_pptx(pptx_bytes)
         
-        # 会話履歴を使用
-        messages = conversation_history.copy()
-        
-        # ユーザーメッセージを追加
-        messages.append({
-            "role": "user",
-            "content": message
-        })
-        
-        # Nova Liteモデル用のリクエストペイロードを構築
-        # 会話履歴を含める
-        bedrock_messages = []
-        for msg in messages:
-            if msg["role"] == "user":
-                bedrock_messages.append({
-                    "role": "user",
-                    "content": [{"text": msg["content"]}]
-                })
-            elif msg["role"] == "assistant":
-                bedrock_messages.append({
-                    "role": "assistant", 
-                    "content": [{"text": msg["content"]}]
-                })
+        # 修正指示を構成してLLMに送信
+        instruction_message = f"""以下のテキストの誤字や一般的な記載ミスを、参考資料をもとに修正してください。
+        参考資料にない場合でも、文脈や一般的な用法に基づいて適切に修正してください。
+        --- 参考資料（正しい内容） ---
+        {reference_text}
+
+        --- 修正対象の文章（誤字を含む） ---
+        {original_txt}
+
+        --- 修正後の文章 ---
+        """
         
         # invoke_model用のリクエストペイロード
         request_payload = {
-            "messages": bedrock_messages,
+            "messages": [{
+                "role": "user",
+                "content": [{"text": instruction_message}]
+            }],
             "inferenceConfig": {
                 "maxTokens": 512,
                 "stopSequences": [],
@@ -100,12 +110,6 @@ def lambda_handler(event, context):
         # アシスタントの応答を取得
         assistant_response = response_body['output']['message']['content'][0]['text']
         
-        # アシスタントの応答を会話履歴に追加
-        messages.append({
-            "role": "assistant",
-            "content": assistant_response
-        })
-        
         # 成功レスポンスの返却
         return {
             "statusCode": 200,
@@ -117,8 +121,7 @@ def lambda_handler(event, context):
             },
             "body": json.dumps({
                 "success": True,
-                "response": assistant_response,
-                "conversationHistory": messages
+                "response": assistant_response
             })
         }
         

@@ -41,6 +41,7 @@ region = us-east-1
 
 ```bash
 npm install -g aws-cdk@latest
+pip install python-pptx -t ./lambda
 
 ```
 
@@ -51,16 +52,18 @@ cdk bootstrap --profile 893048189043_Student
 
 ```
 
-### 4. CDK スタックのデプロイ
+### 5. CDK スタックのデプロイ
 
-コード修正後以下コマンドを実行すれば反映されます。
+コード修正後以下コマンドを実行すれば反映されます。`npm install`を実行すると postinstall でフロントエンドのビルドも完了します。  
+※ lambda フォルダ内の requirements.txt を自動インストールするときに Docker 起動していないとエラーになります。要修正
 
 ```bash
+npm install
 cdk deploy --profile 893048189043_Student
 
 ```
 
-### 5. アプリケーションへのアクセス
+### 6. アプリケーションへのアクセス
 
 デプロイ出力に表示された [CloudFront URL] にアクセスしてアプリケーションを使用します。
 
